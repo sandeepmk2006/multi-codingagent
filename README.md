@@ -26,6 +26,7 @@ I pay for three coding agents — **Claude Code** (Pro), **Antigravity / agy** (
 
 `plugins/copilot` — a Claude Code plugin that adds:
 
+- **`team-worktree`** — creates a per-agent worktree in a location the agent trusts, and `--check` reports agy trust status.
 - **`copilot-delegate`** — runs GitHub Copilot CLI headless as a sub-agent: model choice, read-only or write mode, isolated worktree per task, review mode, compact digests, failure detection.
 - **Opt-in team workflow** — the multi-agent workflow runs **only when you switch it on** for a project, at the start or midway.
 
@@ -72,6 +73,7 @@ Restart Claude Code, open a git repo (with at least one commit) and run `/copilo
 7. **Merge** — merge, full test run, remove worktree, update board.
 
 ## Notes (Windows)
+- agy stalls headless on approval prompts in folders outside its `trustedWorkspaces` (even with `--dangerously-skip-permissions`). `team-worktree agy <name>` puts agy's worktree under `~/.multiagent-worktrees/` (trusted home) instead of editing the trust list.
 - Prompts are sent to Copilot via stdin: a newline inside `copilot -p` on Windows silently drops the permission flags after it.
 - Write mode passes `--allow-all-paths` because folders outside Copilot's `trustedFolders` deny every write headless.
 

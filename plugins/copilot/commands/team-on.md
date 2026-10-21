@@ -9,5 +9,6 @@ The user is switching team mode ON for this project from now on. Arguments: $ARG
 3. Create `.multiagent/BOARD.md` if missing, from the template in the `team-workflow` skill.
 4. Add `.multiagent/worktrees/` to `.gitignore`.
 5. Check helpers respond: `copilot-delegate --help >/dev/null` and `command -v agy-delegate`. Report which are available.
+   Run `team-worktree --check` and report agy's trust status. Do not edit agy's trustedWorkspaces; `team-worktree agy <name>` handles untrusted repos by placing agy's worktree under the trusted home folder.
 6. Load the `copilot:team-workflow` skill and follow it for all remaining work in this project until /copilot:team-off.
 Confirm to the user in 2–3 lines.

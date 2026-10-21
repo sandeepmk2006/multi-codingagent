@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# team-worktree — create (or reuse) a git worktree for a sub-agent and print its path.
+# agy stalls headless on approval prompts in folders outside its trustedWorkspaces,
+# so for agy an untrusted repo gets its worktree under $HOME (trusted by default) instead.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  team-worktree <agent> <name>     create/reuse worktree on branch team/<name>, print its path
+  team-worktree --check            report whether the current repo is trusted by agy
+
+agent: agy | copilot | other
+Placement: <repo>/.multiagent/worktrees/<name>, except for agy when the repo is not
+inside one of agy's trustedWorkspaces -> ~/.multiagent-worktrees/<repo-name>/<name>
+EOF
+}
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "team-worktree: not a git repo" >&2; exit 1; }
+AGY_SETTINGS="$HOME/.gemini/antigravity-cli/settings.json"
+
+# Exit 0 if $1 (a path) sits inside one of agy's trusted workspaces.
+agy_trusts() {
+  [ -f "$AGY_SETTINGS" ] || return 1
+  command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1 || return 1
+  local py; py="$(command -v python3 || command -v python)"
+  local target; target="$(cygpath -w "$1" 2>/dev/null || echo "$1")"
+  local settings; settings="$(cygpath -w "$AGY_SETTINGS" 2>/dev/null || echo "$AGY_SETTINGS")"
+  "$py" - "$settings" "$target" <<'EOF'
+import json, os, sys
+def norm(p): return os.path.normcase(os.path.normpath(p)).rstrip("\\/")
+try: ws = json.load(open(sys.argv[1], encoding="utf-8")).get("trustedWorkspaces", [])
+except Exception: sys.exit(1)
+t = norm(sys.argv[2])
+sys.exit(0 if any(t == norm(w) or t.startswith(norm(w) + os.sep) for w in ws) else 1)
+EOF
+}
+
+case "${1:-}" in
+  -h|--help|"") usage; [ -n "${1:-}" ]; exit $? ;;
+  --check)
+    if agy_trusts "$ROOT"; then echo "agy: trusted ($ROOT) — agy worktrees go in .multiagent/worktrees/"
+    else echo "agy: NOT trusted ($ROOT) — agy worktrees go under ~/.multiagent-worktrees/ (trusted home) so agy never stalls on approval prompts"; fi
+    exit 0 ;;
+esac
+
+AGENT="$1"; NAME="${2:?team-worktree: missing <name>}"
+WT="$ROOT/.multiagent/worktrees/$NAME"
+if [ "$AGENT" = "agy" ] && ! agy_trusts "$ROOT"; then
+  WT="$HOME/.multiagent-worktrees/$(basename "$ROOT")/$NAME"
+fi
+
+if [ ! -d "$WT" ]; then
+  mkdir -p "$(dirname "$WT")"
+  git -C "$ROOT" worktree add -q -B "team/$NAME" "$WT" HEAD >&2 || { echo "team-worktree: could not create $WT" >&2; exit 2; }
+fi
+cygpath -m "$WT" 2>/dev/null || echo "$WT"

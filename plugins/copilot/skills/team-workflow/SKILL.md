@@ -26,12 +26,16 @@ Pick models per task: cheap/fast model for bulk, stronger model for tricky parts
 3. **Brief** — every delegated task gets a self-contained brief: goal, files in scope, files NOT to touch, interfaces/contracts it must match, definition of done, test command. Helpers cannot see this conversation.
 4. **Dispatch in parallel** — each helper in its own worktree:
    - Copilot: `copilot-delegate --worktree copilot-<slug> --digest "<brief>"`
-   - agy: create the worktree first (`git worktree add -B team/agy-<slug> .multiagent/worktrees/agy-<slug> HEAD`), then `agy-delegate --dir .multiagent/worktrees/agy-<slug> --yolo --digest "<brief>"`
+   - agy: `WT=$(team-worktree agy agy-<slug>)`, then `agy-delegate --dir "$WT" --yolo --digest "<brief>"`. In the brief, name `$WT` as the only folder to work in.
+     (`team-worktree` puts the worktree under `~/.multiagent-worktrees/` when the repo is not in agy's trustedWorkspaces — agy otherwise stalls forever on approval prompts headless, even with `--yolo`.)
    - Run long ones with Bash `run_in_background`; do your own `lead` tasks meanwhile.
 5. **Verify** — for each finished task: `git -C <wt> status` / `diff --stat`, run build + tests **yourself** in that worktree. Helpers sometimes claim success falsely or stub things to pass — read the diff.
 6. **Cross-review** — non-trivial changes get a review by a different agent: `copilot-delegate --review main -d <wt>` for agy's work; `agy-delegate --dir <wt> --digest "review git diff main ..."` for Copilot's. You judge each finding.
 7. **Merge** — commit in the worktree, merge `team/<name>` into the working branch, resolve conflicts, run the full test suite, then `git worktree remove` it.
 8. **Update the board** and report to the user: who did what, how verified, what's left.
+
+## Stuck helpers
+- No new files in the worktree after several minutes = probably waiting on an approval prompt. Check `git -C <wt> status`, stop the process, fix the cause (trust/permissions), re-dispatch only the missing parts, and keep any finished files.
 
 ## Keep the lead lean
 - Ingest digests, not raw output. Don't re-read files a helper handled unless verifying.
