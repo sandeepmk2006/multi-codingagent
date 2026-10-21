@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# copilot-delegate — run GitHub Copilot CLI headless as a sub-agent and return a digest.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  copilot-delegate [options] "task prompt"
+  echo "long prompt" | copilot-delegate [options] -
+
+Options:
+  -m, --model <name>        Copilot model (default: $COPILOT_DELEGATE_MODEL or plugin config, else auto)
+  -e, --effort <level>      Reasoning effort: none|minimal|low|medium|high|xhigh|max
+  -d, --dir <path>          Working directory (default: current repo root)
+  -w, --worktree <name>     Run in git worktree .multiagent/worktrees/<name> on branch team/<name>
+                            (created if missing). Implies --write.
+      --write               Allow Copilot to edit files and run shell (default: read-only — file writes denied)
+      --review [<base>]     Review mode: Copilot reviews `git diff <base>` (default: HEAD) read-only
+      --digest              Ask for a compact digest instead of a long answer
+      --timeout <dur>       Max run time (default: plugin config, else 10m)
+      --print-command       Print the resolved command and exit
+  -h, --help                Show this help
+
+Exit codes: 0 ok | 1 usage | 2 copilot failed | 3 empty output | 12 timeout
+EOF
+}
+
+MODEL="${COPILOT_DELEGATE_MODEL:-${CLAUDE_PLUGIN_OPTION_DEFAULT_MODEL:-auto}}"
+TIMEOUT="${CLAUDE_PLUGIN_OPTION_TIMEOUT:-10m}"
+EFFORT="" DIR="" WORKTREE="" WRITE=0 REVIEW=0 BASE="HEAD" DIGEST=0 DRY=0 PROMPT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m|--model) MODEL="$2"; shift 2 ;;
+    -e|--effort) EFFORT="$2"; shift 2 ;;
+    -d|--dir) DIR="$2"; shift 2 ;;
+    -w|--worktree) WORKTREE="$2"; WRITE=1; shift 2 ;;
+    --write) WRITE=1; shift ;;
+    --review) REVIEW=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ] && git rev-parse -q --verify "$2" >/dev/null 2>&1; then BASE="$2"; shift; fi; shift ;;
+    --digest) DIGEST=1; shift ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --print-command) DRY=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -) PROMPT="$(cat)"; shift ;;
+    *) PROMPT="${PROMPT:+$PROMPT }$1"; shift ;;
+  esac
+done
+
+command -v copilot >/dev/null 2>&1 || { echo "copilot-delegate: 'copilot' CLI not found on PATH (install: npm i -g @github/copilot, then 'copilot login')" >&2; exit 1; }
+
+[ -n "$DIR" ] || DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+if [ -n "$WORKTREE" ]; then
+  ROOT="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)" || { echo "copilot-delegate: --worktree needs a git repo" >&2; exit 1; }
+  WT="$ROOT/.multiagent/worktrees/$WORKTREE"
+  if [ ! -d "$WT" ] && [ $DRY -eq 0 ]; then
+    git -C "$ROOT" worktree add -q -B "team/$WORKTREE" "$WT" HEAD >&2 || { echo "copilot-delegate: could not create worktree $WT" >&2; exit 2; }
+  fi
+  DIR="$WT"
+fi
+
+if [ $REVIEW -eq 1 ]; then
+  WRITE=0
+  PROMPT="You are a code reviewer. Run \`git diff $BASE\` (and \`git status\` for untracked files) in this repository and review the changes. Report ONLY real problems: bugs, security issues, broken edge cases, missing error handling, mismatches with the task. For each: file:line, severity (high/medium/low), one-line fix. No praise, no style nitpicks. If nothing is wrong, say 'No issues found.'${PROMPT:+
+
+Extra context from the lead: $PROMPT}"
+fi
+
+[ -n "$PROMPT" ] || { usage >&2; exit 1; }
+
+if [ $DIGEST -eq 1 ]; then
+  PROMPT="$PROMPT
+
+OUTPUT CONTRACT: reply with a compact digest only — at most ~20 bullets: what you did/found, files changed, commands run and their result, anything left undone. No full file contents, no long code dumps."
+fi
+if [ $WRITE -eq 1 ]; then
+  PROMPT="$PROMPT
+
+When finished, end with a section 'FILES CHANGED' listing every file you created/modified and 'VERIFIED' stating exactly which command you ran to test it and its result (or 'not verified')."
+fi
+
+ARGS=(-p "$PROMPT" -s --model "$MODEL" --allow-all-tools --no-color)
+[ -n "$EFFORT" ] && ARGS+=(--reasoning-effort "$EFFORT")
+[ $WRITE -eq 1 ] || ARGS+=(--deny-tool write)
+
+if [ $DRY -eq 1 ]; then
+  printf 'cd %q && timeout %s copilot' "$DIR" "$TIMEOUT"; printf ' %q' "${ARGS[@]}"; echo; exit 0
+fi
+
+OUT="$(cd "$DIR" && timeout "$TIMEOUT" copilot "${ARGS[@]}" 2>&1)"; RC=$?
+if [ $RC -eq 124 ]; then echo "copilot-delegate: timed out after $TIMEOUT" >&2; printf '%s\n' "$OUT" | tail -20; exit 12; fi
+if [ $RC -ne 0 ]; then echo "copilot-delegate: copilot exited $RC" >&2; printf '%s\n' "$OUT" | tail -30; exit 2; fi
+[ -n "${OUT//[[:space:]]/}" ] || { echo "copilot-delegate: empty output" >&2; exit 3; }
+
+printf '%s\n' "$OUT"
+[ ${#OUT} -gt 8000 ] && echo "copilot-delegate: note — reply is ${#OUT} chars; re-run with --digest to keep the lead's context lean" >&2
+[ -n "$WORKTREE" ] && echo "[worktree: $DIR  branch: team/$WORKTREE]" >&2
+exit 0

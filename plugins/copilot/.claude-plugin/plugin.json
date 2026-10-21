@@ -1,0 +1,22 @@
+{
+  "name": "copilot",
+  "version": "0.1.0",
+  "description": "GitHub Copilot CLI as a sub-agent for Claude Code, plus an opt-in team workflow where Claude leads and agy + Copilot execute in parallel git worktrees.",
+  "author": { "name": "sandeepmk2006" },
+  "homepage": "https://github.com/sandeepmk2006/multi-codingagent",
+  "keywords": ["copilot", "multi-agent", "delegation", "orchestration"],
+  "userConfig": {
+    "default_model": {
+      "type": "string",
+      "title": "Default Copilot model",
+      "description": "Model passed to `copilot --model` when --model is not given. 'auto' lets Copilot pick.",
+      "default": "auto"
+    },
+    "timeout": {
+      "type": "string",
+      "title": "Default timeout",
+      "description": "Max run time for one delegation, e.g. 5m, 10m, 600s.",
+      "default": "10m"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "multi-codingagent",
+  "description": "Use Claude Code, Antigravity (agy) and GitHub Copilot together: one leader, the others as sub-agents.",
+  "owner": { "name": "sandeepmk2006" },
+  "plugins": [
+    {
+      "name": "copilot",
+      "description": "GitHub Copilot CLI as a sub-agent for Claude Code, plus an opt-in multi-agent team workflow (Claude leads, agy + Copilot execute).",
+      "source": "./plugins/copilot",
+      "category": "ai",
+      "keywords": ["copilot", "multi-agent", "delegation", "orchestration"]
+    }
+  ]
+}
