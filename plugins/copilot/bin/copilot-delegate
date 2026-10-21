@@ -92,8 +92,12 @@ case "$COMPLEXITY" in
   "") TIER="" ;;
   *) echo "copilot-delegate: complexity must be low|medium|high" >&2; exit 1 ;;
 esac
-[ -n "$EFFORT" ] && ARGS+=(--reasoning-effort "$EFFORT")
-[ -n "$TIER" ] && [ "$MODEL" = auto ] && ARGS+=(--auto-tier "$TIER")
+# Model "auto" rejects --reasoning-effort; it takes the auto-tier instead.
+if [ "$MODEL" = auto ]; then
+  [ -n "$TIER" ] && ARGS+=(--auto-tier "$TIER")
+else
+  [ -n "$EFFORT" ] && ARGS+=(--reasoning-effort "$EFFORT")
+fi
 ARGS+=(--add-dir "$DIR")
 # Folders outside Copilot's trustedFolders get every write/shell call denied headless; --allow-all-paths lifts that.
 if [ $WRITE -eq 1 ]; then ARGS+=(--allow-all-paths); else ARGS+=(--deny-tool write); fi
@@ -102,13 +106,15 @@ if [ $DRY -eq 1 ]; then
   printf 'cd %q && printf %%s %q | timeout %s copilot' "$DIR" "$PROMPT" "$TIMEOUT"; printf ' %q' "${ARGS[@]}"; echo; exit 0
 fi
 
+STATE_BEFORE="$(git -C "$DIR" rev-parse HEAD 2>/dev/null)$(git -C "$DIR" status --porcelain 2>/dev/null)"
 OUT="$(cd "$DIR" && printf '%s\n' "$PROMPT" | timeout "$TIMEOUT" copilot "${ARGS[@]}" 2>&1)"; RC=$?
 if [ $RC -eq 124 ]; then echo "copilot-delegate: timed out after $TIMEOUT" >&2; printf '%s\n' "$OUT" | tail -20; exit 12; fi
 if [ $RC -ne 0 ]; then echo "copilot-delegate: copilot exited $RC" >&2; printf '%s\n' "$OUT" | tail -30; exit 2; fi
 [ -n "${OUT//[[:space:]]/}" ] || { echo "copilot-delegate: empty output" >&2; exit 3; }
 
 printf '%s\n' "$OUT"
-if [ $WRITE -eq 1 ] && printf '%s' "$OUT" | grep -qE 'Changes +\+0 -0'; then
+STATE_AFTER="$(git -C "$DIR" rev-parse HEAD 2>/dev/null)$(git -C "$DIR" status --porcelain 2>/dev/null)"
+if [ $WRITE -eq 1 ] && { [ "$STATE_BEFORE" = "$STATE_AFTER" ] || printf '%s' "$OUT" | grep -qE 'Changes +\+0 -0'; }; then
   echo "copilot-delegate: write task but Copilot changed nothing (permission denied or gave up) — check the output above" >&2; exit 4
 fi
 [ ${#OUT} -gt 8000 ] && echo "copilot-delegate: note — reply is ${#OUT} chars; re-run with --digest to keep the lead's context lean" >&2
