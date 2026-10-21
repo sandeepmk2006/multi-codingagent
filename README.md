@@ -64,6 +64,9 @@ claude plugin install copilot@multi-codingagent
 ```
 Restart Claude Code, open a git repo (with at least one commit) and run `/copilot:team-on`.
 
+## Real example
+[team-demo](https://github.com/sandeepmk2006/team-demo) — a todo app built in two team rounds (Claude led; agy + Copilot built and cross-reviewed). Its `.multiagent/BOARD.md` records every task, stall and review finding.
+
 ## How a team-mode request flows
 
 1. **Plan** — leader splits the request into tasks: `lead` / `agy` / `copilot`.
