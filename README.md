@@ -26,6 +26,7 @@ I pay for three coding agents — **Claude Code** (Pro), **Antigravity / agy** (
 
 `plugins/copilot` — a Claude Code plugin that adds:
 
+- **`agy-run`** — fully automatic agy: Claude models first (Opus 4.6 / Sonnet 4.6), auto-switch to Gemini when agy's Claude quota runs out, model + timeout picked by `-c low|medium|high`, never waits on a prompt.
 - **`team-worktree`** — creates a per-agent worktree in a location the agent trusts, and `--check` reports agy trust status.
 - **`copilot-delegate`** — runs GitHub Copilot CLI headless as a sub-agent: model choice, read-only or write mode, isolated worktree per task, review mode, compact digests, failure detection.
 - **Opt-in team workflow** — the multi-agent workflow runs **only when you switch it on** for a project, at the start or midway.
@@ -48,7 +49,8 @@ Works alongside the antigravity plugin (`agy-delegate`) for the Antigravity side
 copilot-delegate "explain src/auth.ts"                      # read-only question
 copilot-delegate --worktree login --digest "add login page"  # edits on branch team/login
 copilot-delegate --review main                               # review git diff main
-copilot-delegate --model <name> --effort high "..."          # pick model / reasoning effort
+copilot-delegate -c high "..."                               # complexity -> effort + auto-tier
+agy-run -c high --dir <wt> "..."                             # Opus 4.6 -> Sonnet 4.6 -> Gemini
 ```
 Exit codes: `0` ok · `1` usage · `2` copilot failed · `3` empty · `4` write task changed nothing · `12` timeout
 

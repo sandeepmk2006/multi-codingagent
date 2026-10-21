@@ -12,10 +12,18 @@ description: Multi-agent team workflow — Claude leads, Antigravity (agy) and G
 | Agent | Call | Best for |
 |---|---|---|
 | **Claude (lead)** | — | Plan, split, architecture, hard/judgement-heavy parts, verification, merge, final answer |
-| **agy** (Gemini Flash / Pro, also Claude 4.6 via Jio plan) | `agy-delegate --tier flash --dir <wt> --yolo --digest "<brief>"` | Bulk generation, scaffolding, test suites, migrations, long-doc/datasheet reading, web research |
-| **Copilot** | `copilot-delegate --worktree <name> --digest "<brief>"` | Parallel feature work, second-opinion review (`--review`), quick side tasks |
+| **agy** (Claude Opus/Sonnet 4.6 first, Gemini fallback) | `agy-run -c <low\|medium\|high> --dir <wt> "<brief>"` | Bulk generation, scaffolding, test suites, migrations, long-doc/datasheet reading, web research |
+| **Copilot** | `copilot-delegate -c <low\|medium\|high> --worktree <name> --digest "<brief>"` | Parallel feature work, second-opinion review (`--review`), quick side tasks |
 
-Pick models per task: cheap/fast model for bulk, stronger model for tricky parts. A reviewer should be a **different model** from the author.
+## Choosing complexity (sets model + effort + timeout)
+| `-c` | Use for | agy ladder | Copilot |
+|---|---|---|---|
+| `low` | boilerplate, renames, simple files, docs | Sonnet 4.6 -> Gemini Flash Medium (5m) | effort low, auto-tier efficiency |
+| `medium` | normal features, test suites, reviews | Sonnet 4.6 -> Gemini Flash High (10m) | effort medium, balance |
+| `high` | tricky logic, architecture-sensitive, security | Opus 4.6 Thinking -> Sonnet 4.6 -> Gemini Flash High (20m) | effort high, intelligence |
+
+`agy-run` is fully automatic: always auto-approves, adds no-questions/no-scratch rules to every brief, has a hard timeout, and on failure drops to the next model. When agy's Claude quota runs out it marks Claude exhausted for 5h (`~/.multiagent/agy-claude-exhausted`) and goes straight to Gemini. Check with `agy-run -c high --print-plan`.
+A reviewer should be a **different model** from the author.
 
 ## Loop for each user request
 
@@ -26,18 +34,18 @@ Pick models per task: cheap/fast model for bulk, stronger model for tricky parts
 3. **Brief** — every delegated task gets a self-contained brief: goal, files in scope, files NOT to touch, interfaces/contracts it must match, definition of done, test command. Helpers cannot see this conversation.
 4. **Dispatch in parallel** — each helper in its own worktree:
    - Copilot: `copilot-delegate --worktree copilot-<slug> --digest "<brief>"`
-   - agy: `WT=$(team-worktree agy agy-<slug>)`, then `agy-delegate --dir "$WT" --yolo --digest "<brief>"`. In the brief, name `$WT` as the only folder to work in.
+   - agy: `WT=$(team-worktree agy agy-<slug>)`, then `agy-run -c <complexity> --dir "$WT" "<brief>"`.
      (`team-worktree` puts the worktree under `~/.multiagent-worktrees/` when the repo is not in agy's trustedWorkspaces — agy otherwise stalls forever on approval prompts headless, even with `--yolo`.)
    - Run long ones with Bash `run_in_background`; do your own `lead` tasks meanwhile.
 5. **Verify** — for each finished task: `git -C <wt> status` / `diff --stat`, run build + tests **yourself** in that worktree. Helpers sometimes claim success falsely or stub things to pass — read the diff.
-6. **Cross-review** — non-trivial changes get a review by a different agent: `copilot-delegate --review main -d <wt>` for agy's work; `agy-delegate --dir <wt> --digest "review git diff main ..."` for Copilot's. You judge each finding.
+6. **Cross-review** — non-trivial changes get a review by a different agent: `copilot-delegate -c medium --review main -d <wt>` for agy's work; `agy-run -c medium --read-only --dir <wt> "review git diff main ..."` for Copilot's. You judge each finding.
 7. **Merge** — commit in the worktree, merge `team/<name>` into the working branch, resolve conflicts, run the full test suite, then `git worktree remove` it.
 8. **Update the board** and report to the user: who did what, how verified, what's left.
 
 ## Lessons from real runs
 - Give each helper everything it needs to run its own checks. If its work depends on another agent's branch, merge that branch into its worktree first; otherwise agy can loop trying to build a scratch environment.
 - Put "Do NOT create scratch files or directories" in every agy brief.
-- agy needs `--yolo` even for read-only reviews (it cannot run commands otherwise); say "do not modify any file" in the brief and check `git status` afterwards.
+- agy needs auto-approve even for read-only reviews — `agy-run --read-only` handles it and warns if files changed.
 - Cap agy runs with `--timeout` (8m is plenty for a single file). Copilot was faster and more reliable for reviews in testing.
 
 ## Stuck helpers

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# agy-run — fully automatic agy delegation: Claude models first, Gemini fallback,
+# model + timeout chosen by complexity, never waits on a prompt.
+set -uo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  agy-run [-c low|medium|high] [--read-only] [--dir <path>] "task prompt"
+  echo "prompt" | agy-run [options] -
+
+  -c, --complexity   low | medium (default) | high — picks model ladder and timeout
+  -d, --dir          workspace (default: repo root). Must be agy-trusted: use `team-worktree agy <name>`
+      --read-only    review/analysis: brief says "modify nothing"; files are checked afterwards
+      --timeout      override the per-attempt timeout
+      --print-plan   show the model ladder and exit
+  -h, --help
+
+Model ladder (first that works wins; a quota hit on Claude marks Claude exhausted for
+AGY_CLAUDE_COOLDOWN_H hours, default 5, so later calls go straight to Gemini):
+  high    claude-opus-4-6-thinking -> claude-sonnet-4-6 -> gemini-3.8-flash-high
+  medium  claude-sonnet-4-6 -> gemini-3.8-flash-high
+  low     claude-sonnet-4-6 -> gemini-3.8-flash-medium
+
+Exit codes: 0 ok | 1 usage | 2 all models failed | 15 permission denied (fix trust, do not retry)
+EOF
+}
+
+COMPLEXITY=medium DIR="" READONLY=0 TIMEOUT="" PLAN=0 PROMPT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c|--complexity) COMPLEXITY="$2"; shift 2 ;;
+    -d|--dir) DIR="$2"; shift 2 ;;
+    --read-only) READONLY=1; shift ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --print-plan) PLAN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -) PROMPT="$(cat)"; shift ;;
+    *) PROMPT="${PROMPT:+$PROMPT }$1"; shift ;;
+  esac
+done
+
+case "$COMPLEXITY" in
+  high)   LADDER=(claude-opus-4-6-thinking claude-sonnet-4-6 gemini-3.8-flash-high); DEF_TIMEOUT=20m ;;
+  medium) LADDER=(claude-sonnet-4-6 gemini-3.8-flash-high); DEF_TIMEOUT=10m ;;
+  low)    LADDER=(claude-sonnet-4-6 gemini-3.8-flash-medium); DEF_TIMEOUT=5m ;;
+  *) echo "agy-run: complexity must be low|medium|high" >&2; exit 1 ;;
+esac
+TIMEOUT="${TIMEOUT:-$DEF_TIMEOUT}"
+
+STATE_DIR="$HOME/.multiagent"; EXHAUSTED="$STATE_DIR/agy-claude-exhausted"
+COOLDOWN_H="${AGY_CLAUDE_COOLDOWN_H:-5}"
+claude_exhausted() {
+  [ -f "$EXHAUSTED" ] || return 1
+  local age=$(( $(date +%s) - $(cat "$EXHAUSTED" 2>/dev/null || echo 0) ))
+  [ $age -lt $(( COOLDOWN_H * 3600 )) ] || { rm -f "$EXHAUSTED"; return 1; }
+}
+
+if [ $PLAN -eq 1 ]; then
+  claude_exhausted && echo "Claude in agy: exhausted (cooldown) — Claude models skipped"
+  echo "complexity=$COMPLEXITY timeout=$TIMEOUT ladder: ${LADDER[*]}"; exit 0
+fi
+[ -n "$PROMPT" ] || { usage >&2; exit 1; }
+command -v agy-delegate >/dev/null 2>&1 || { echo "agy-run: agy-delegate not found (install the antigravity plugin)" >&2; exit 1; }
+
+[ -n "$DIR" ] || DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+DIR="$(cd "$DIR" 2>/dev/null && (cygpath -m "$(pwd)" 2>/dev/null || pwd))" || { echo "agy-run: directory not found" >&2; exit 1; }
+
+# Guard rails every brief gets: these stopped every stall seen in testing.
+RULES="RULES: Work ONLY inside $DIR. Never ask questions or wait for confirmation — make a reasonable choice and note it. Do NOT create scratch files or directories anywhere. If a command fails twice the same way, stop retrying it and report the blocker."
+[ $READONLY -eq 1 ] && RULES="$RULES This is READ-ONLY: do not create, modify or delete any file."
+BRIEF="$PROMPT
+
+$RULES"
+
+before=""; [ $READONLY -eq 1 ] && before="$(git -C "$DIR" status --porcelain 2>/dev/null)"
+
+for model in "${LADDER[@]}"; do
+  if [[ $model == claude-* ]] && claude_exhausted; then continue; fi
+  echo "agy-run: trying $model (complexity=$COMPLEXITY, timeout=$TIMEOUT)" >&2
+  OUT="$(printf '%s' "$BRIEF" | agy-delegate -m "$model" --dir "$DIR" --yolo --digest --timeout "$TIMEOUT" - 2>&1)"; RC=$?
+  case $RC in
+    0)
+      printf '%s\n' "$OUT" | grep -v '^AGY_USAGE'
+      echo "[agy-run: model=$model]" >&2
+      if [ $READONLY -eq 1 ] && [ "$(git -C "$DIR" status --porcelain 2>/dev/null)" != "$before" ]; then
+        echo "agy-run: WARNING read-only task changed files in $DIR — inspect git status" >&2
+      fi
+      exit 0 ;;
+    10)
+      echo "agy-run: $model quota exhausted" >&2
+      if [[ $model == claude-* ]]; then mkdir -p "$STATE_DIR"; date +%s > "$EXHAUSTED"; echo "agy-run: Claude in agy marked exhausted for ${COOLDOWN_H}h — switching to Gemini" >&2; fi ;;
+    15)
+      printf '%s\n' "$OUT" | tail -5 >&2
+      echo "agy-run: permission denied in $DIR — not retrying (is it agy-trusted? use team-worktree agy <name>)" >&2; exit 15 ;;
+    *)
+      echo "agy-run: $model failed (exit $RC) — trying next model" >&2
+      printf '%s\n' "$OUT" | grep -E 'AGY_SIGNAL|agy-delegate:' | tail -2 >&2 ;;
+  esac
+done
+echo "agy-run: all models failed" >&2
+exit 2

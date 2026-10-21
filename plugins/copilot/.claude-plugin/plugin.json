@@ -1,6 +1,6 @@
 {
   "name": "copilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "GitHub Copilot CLI as a sub-agent for Claude Code, plus an opt-in team workflow where Claude leads and agy + Copilot execute in parallel git worktrees.",
   "author": { "name": "sandeepmk2006" },
   "homepage": "https://github.com/sandeepmk2006/multi-codingagent",

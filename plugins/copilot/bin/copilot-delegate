@@ -10,7 +10,9 @@ Usage:
 
 Options:
   -m, --model <name>        Copilot model (default: $COPILOT_DELEGATE_MODEL or plugin config, else auto)
-  -e, --effort <level>      Reasoning effort: none|minimal|low|medium|high|xhigh|max
+  -c, --complexity <c>      low|medium|high — sets reasoning effort (low/medium/high) and, with
+                            model auto, the auto-tier (efficiency/balance/intelligence)
+  -e, --effort <level>      Reasoning effort: none|minimal|low|medium|high|xhigh|max (overrides -c)
   -d, --dir <path>          Working directory (default: current repo root)
   -w, --worktree <name>     Run in git worktree .multiagent/worktrees/<name> on branch team/<name>
                             (created if missing). Implies --write.
@@ -27,11 +29,12 @@ EOF
 
 MODEL="${COPILOT_DELEGATE_MODEL:-${CLAUDE_PLUGIN_OPTION_DEFAULT_MODEL:-auto}}"
 TIMEOUT="${CLAUDE_PLUGIN_OPTION_TIMEOUT:-10m}"
-EFFORT="" DIR="" WORKTREE="" WRITE=0 REVIEW=0 BASE="HEAD" DIGEST=0 DRY=0 PROMPT=""
+EFFORT="" COMPLEXITY="" DIR="" WORKTREE="" WRITE=0 REVIEW=0 BASE="HEAD" DIGEST=0 DRY=0 PROMPT=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -m|--model) MODEL="$2"; shift 2 ;;
+    -c|--complexity) COMPLEXITY="$2"; shift 2 ;;
     -e|--effort) EFFORT="$2"; shift 2 ;;
     -d|--dir) DIR="$2"; shift 2 ;;
     -w|--worktree) WORKTREE="$2"; WRITE=1; shift 2 ;;
@@ -82,7 +85,15 @@ fi
 
 # Prompt goes on stdin, not -p: on Windows a newline inside -p drops the permission flags after it.
 ARGS=(-s --model "$MODEL" --allow-all-tools --no-color)
+case "$COMPLEXITY" in
+  low) EFFORT="${EFFORT:-low}"; TIER=efficiency ;;
+  medium) EFFORT="${EFFORT:-medium}"; TIER=balance ;;
+  high) EFFORT="${EFFORT:-high}"; TIER=intelligence ;;
+  "") TIER="" ;;
+  *) echo "copilot-delegate: complexity must be low|medium|high" >&2; exit 1 ;;
+esac
 [ -n "$EFFORT" ] && ARGS+=(--reasoning-effort "$EFFORT")
+[ -n "$TIER" ] && [ "$MODEL" = auto ] && ARGS+=(--auto-tier "$TIER")
 ARGS+=(--add-dir "$DIR")
 # Folders outside Copilot's trustedFolders get every write/shell call denied headless; --allow-all-paths lifts that.
 if [ $WRITE -eq 1 ]; then ARGS+=(--allow-all-paths); else ARGS+=(--deny-tool write); fi
