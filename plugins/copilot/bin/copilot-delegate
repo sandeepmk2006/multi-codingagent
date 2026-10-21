@@ -21,7 +21,7 @@ Options:
       --print-command       Print the resolved command and exit
   -h, --help                Show this help
 
-Exit codes: 0 ok | 1 usage | 2 copilot failed | 3 empty output | 12 timeout
+Exit codes: 0 ok | 1 usage | 2 copilot failed | 3 empty output | 4 write task changed nothing | 12 timeout
 EOF
 }
 
@@ -49,6 +49,7 @@ done
 command -v copilot >/dev/null 2>&1 || { echo "copilot-delegate: 'copilot' CLI not found on PATH (install: npm i -g @github/copilot, then 'copilot login')" >&2; exit 1; }
 
 [ -n "$DIR" ] || DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+DIR="$(cd "$DIR" 2>/dev/null && pwd)" || { echo "copilot-delegate: directory not found" >&2; exit 1; }
 
 if [ -n "$WORKTREE" ]; then
   ROOT="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)" || { echo "copilot-delegate: --worktree needs a git repo" >&2; exit 1; }
@@ -79,20 +80,26 @@ if [ $WRITE -eq 1 ]; then
 When finished, end with a section 'FILES CHANGED' listing every file you created/modified and 'VERIFIED' stating exactly which command you ran to test it and its result (or 'not verified')."
 fi
 
-ARGS=(-p "$PROMPT" -s --model "$MODEL" --allow-all-tools --no-color)
+# Prompt goes on stdin, not -p: on Windows a newline inside -p drops the permission flags after it.
+ARGS=(-s --model "$MODEL" --allow-all-tools --no-color)
 [ -n "$EFFORT" ] && ARGS+=(--reasoning-effort "$EFFORT")
-[ $WRITE -eq 1 ] || ARGS+=(--deny-tool write)
+ARGS+=(--add-dir "$DIR")
+# Folders outside Copilot's trustedFolders get every write/shell call denied headless; --allow-all-paths lifts that.
+if [ $WRITE -eq 1 ]; then ARGS+=(--allow-all-paths); else ARGS+=(--deny-tool write); fi
 
 if [ $DRY -eq 1 ]; then
-  printf 'cd %q && timeout %s copilot' "$DIR" "$TIMEOUT"; printf ' %q' "${ARGS[@]}"; echo; exit 0
+  printf 'cd %q && printf %%s %q | timeout %s copilot' "$DIR" "$PROMPT" "$TIMEOUT"; printf ' %q' "${ARGS[@]}"; echo; exit 0
 fi
 
-OUT="$(cd "$DIR" && timeout "$TIMEOUT" copilot "${ARGS[@]}" 2>&1)"; RC=$?
+OUT="$(cd "$DIR" && printf '%s\n' "$PROMPT" | timeout "$TIMEOUT" copilot "${ARGS[@]}" 2>&1)"; RC=$?
 if [ $RC -eq 124 ]; then echo "copilot-delegate: timed out after $TIMEOUT" >&2; printf '%s\n' "$OUT" | tail -20; exit 12; fi
 if [ $RC -ne 0 ]; then echo "copilot-delegate: copilot exited $RC" >&2; printf '%s\n' "$OUT" | tail -30; exit 2; fi
 [ -n "${OUT//[[:space:]]/}" ] || { echo "copilot-delegate: empty output" >&2; exit 3; }
 
 printf '%s\n' "$OUT"
+if [ $WRITE -eq 1 ] && printf '%s' "$OUT" | grep -qE 'Changes +\+0 -0'; then
+  echo "copilot-delegate: write task but Copilot changed nothing (permission denied or gave up) — check the output above" >&2; exit 4
+fi
 [ ${#OUT} -gt 8000 ] && echo "copilot-delegate: note — reply is ${#OUT} chars; re-run with --digest to keep the lead's context lean" >&2
 [ -n "$WORKTREE" ] && echo "[worktree: $DIR  branch: team/$WORKTREE]" >&2
 exit 0
