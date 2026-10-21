@@ -34,6 +34,12 @@ Pick models per task: cheap/fast model for bulk, stronger model for tricky parts
 7. **Merge** — commit in the worktree, merge `team/<name>` into the working branch, resolve conflicts, run the full test suite, then `git worktree remove` it.
 8. **Update the board** and report to the user: who did what, how verified, what's left.
 
+## Lessons from real runs
+- Give each helper everything it needs to run its own checks. If its work depends on another agent's branch, merge that branch into its worktree first; otherwise agy can loop trying to build a scratch environment.
+- Put "Do NOT create scratch files or directories" in every agy brief.
+- agy needs `--yolo` even for read-only reviews (it cannot run commands otherwise); say "do not modify any file" in the brief and check `git status` afterwards.
+- Cap agy runs with `--timeout` (8m is plenty for a single file). Copilot was faster and more reliable for reviews in testing.
+
 ## Stuck helpers
 - No new files in the worktree after several minutes = probably waiting on an approval prompt. Check `git -C <wt> status`, stop the process, fix the cause (trust/permissions), re-dispatch only the missing parts, and keep any finished files.
 
